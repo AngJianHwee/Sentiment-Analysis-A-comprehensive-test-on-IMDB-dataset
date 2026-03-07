@@ -4,9 +4,21 @@ from gensim.scripts.glove2word2vec import glove2word2vec
 from gensim.models import Word2Vec
 from nltk.tokenize import word_tokenize
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 
-def simple_vocab_vectorizer(texts):
+def simple_vocab_vectorizer(texts, n_jobs=None):
+    """
+    Create vocabulary and vectorize texts using parallel processing.
+    
+    Args:
+        texts: List of preprocessed text strings
+        n_jobs: Number of parallel jobs (-1 for all CPUs)
+    
+    Returns:
+        List of feature vectors
+    """
     # built a vocab
     vocab = set()
     for review in texts:
@@ -27,7 +39,19 @@ def simple_vocab_vectorizer(texts):
                 vector[word_to_index[word]] += 1
         return vector
 
-    return [review_to_vector(review) for review in texts]
+    # Determine number of parallel jobs
+    if n_jobs is None:
+        n_jobs = cpu_count()
+    
+    if n_jobs == 1 or len(texts) < 100:
+        return [review_to_vector(review) for review in texts]
+    
+    try:
+        with Pool(processes=n_jobs) as pool:
+            results = list(pool.imap(review_to_vector, texts, chunksize=100))
+        return results
+    except Exception as e:
+        return [review_to_vector(review) for review in texts]
 
 
 def tfidf_vectorizer(texts):
@@ -84,7 +108,17 @@ def init_glove(glove_folder_path=None):
     return glove_model
 
 
-def glove_vectorizer(texts):
+def glove_vectorizer(texts, n_jobs=None):
+    """
+    Vectorize texts using GloVe embeddings with parallel processing.
+    
+    Args:
+        texts: List of preprocessed text strings
+        n_jobs: Number of parallel jobs (-1 for all CPUs)
+    
+    Returns:
+        List of averaged GloVe vectors
+    """
     glove_model = init_glove()
 
     def text_to_vec(text):
@@ -94,6 +128,18 @@ def glove_vectorizer(texts):
                 vec.append(glove_model[word])
             except KeyError:
                 vec.append(glove_model['unk'])
-        return sum(vec) / len(vec)
+        return sum(vec) / len(vec) if vec else glove_model['unk']
 
-    return [text_to_vec(text) for text in texts]
+    # Determine number of parallel jobs
+    if n_jobs is None:
+        n_jobs = cpu_count()
+    
+    if n_jobs == 1 or len(texts) < 100:
+        return [text_to_vec(text) for text in texts]
+    
+    try:
+        with Pool(processes=n_jobs) as pool:
+            results = list(pool.imap(text_to_vec, texts, chunksize=100))
+        return results
+    except Exception as e:
+        return [text_to_vec(text) for text in texts]

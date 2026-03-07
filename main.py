@@ -1,10 +1,11 @@
-from classifier import VECTORIZATION_APPROACHES, CLASSIFICATION_MODELS, run_model
+from classifier import VECTORIZATION_APPROACHES, CLASSIFICATION_MODELS, run_model, run_models_parallel
 import json
 from tqdm import tqdm
 import random
 from vectorizer import simple_vocab_vectorizer, tfidf_vectorizer, word2vec_vectorizer, glove_vectorizer
 from preprocessing import nltk_init, preprocess_texts, generate_stopwords, generate_stemmer, generate_lemmatizer
 from utils import plot_figure, plot_training_results
+from multiprocessing import cpu_count
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -39,10 +40,14 @@ stemmer = generate_stemmer()
 lemmatizer = generate_lemmatizer()
 stop_words = generate_stopwords()
 
+# Get number of CPU cores for parallel processing
+n_jobs = cpu_count()
+logger.info(f'[System] Using {n_jobs} CPU cores for parallel processing')
+
 logger.info('[Preprocessing] Start preprocessing data')
 
 data['review_cleaned'] = preprocess_texts(
-    data['review'], stop_words, stemmer, lemmatizer, logger)
+    data['review'], stop_words, stemmer, lemmatizer, logger, n_jobs=n_jobs)
 
 logger.info('[Preprocessing] Data preprocessing completed')
 
@@ -57,7 +62,7 @@ for i in range(10):
 
 # Approach 1: Simple vectorizer
 logger.info('[Vectorization] [Simple] Start vectorization')
-data['review_vector__simple'] = simple_vocab_vectorizer(data['review_cleaned'])
+data['review_vector__simple'] = simple_vocab_vectorizer(data['review_cleaned'], n_jobs=n_jobs)
 logger.info('[Vectorization] [Simple] Vectorization completed')
 
 # Approach 2: tf-idf and save to review_vector__tfidf
@@ -72,7 +77,7 @@ logger.info('[Vectorization] [word2vec] Vectorization completed')
 
 # Approach 4: GloVe
 logger.info('[Vectorization] [GloVe] Prepare GloVe start')
-data['review_vector__glove'] = glove_vectorizer(data['review_cleaned'])
+data['review_vector__glove'] = glove_vectorizer(data['review_cleaned'], n_jobs=n_jobs)
 logger.info('[Vectorization] [GloVe] Vectorization completed')
 
 # view first 5 rows
@@ -100,13 +105,15 @@ for approach in tqdm(VECTORIZATION_APPROACHES, desc='Approach', position=0):
     y_train = [1 if x == 'positive' else 0 for x in y_train]
     y_test = [1 if x == 'positive' else 0 for x in y_test]
 
-    for cur_model in tqdm(CLASSIFICATION_MODELS, desc='Model', position=1):
+    # Train all models in parallel for this approach
+    logger.info(f'[Training] [Approach: {approach}] Training {len(CLASSIFICATION_MODELS)} models in parallel (n_jobs={n_jobs})')
+    train_results[approach] = run_models_parallel(
+        CLASSIFICATION_MODELS, approach, X_train, y_train, X_test, y_test, logger, n_jobs=n_jobs)
 
-        train_results[approach][cur_model[1]] = run_model(
-            cur_model, approach, X_train, y_train, X_test, y_test, logger)
-
-        acc, f1, precision, recall = train_results[approach][cur_model[1]].values()
-        logger.info(f'[Predict] [approach: {approach}] [Model: {cur_model[1]}] Completed, acc: {acc:.4f}, f1: {f1:.4f}, precision: {precision:.4f}, recall: {recall:.4f}')
+    # Log results
+    for model_name, metrics in train_results[approach].items():
+        acc, f1, precision, recall = metrics.values()
+        logger.info(f'[Predict] [approach: {approach}] [Model: {model_name}] Completed, acc: {acc:.4f}, f1: {f1:.4f}, precision: {precision:.4f}, recall: {recall:.4f}')
 
 logger.info('[Train] Completed')
 
